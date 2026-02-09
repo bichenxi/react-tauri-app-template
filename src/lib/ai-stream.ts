@@ -3,6 +3,18 @@
  * 支持 OpenAI 兼容的 SSE 协议
  */
 
+/** 检测是否运行在 Tauri 环境中 */
+const isTauri = () => !!(window as any).__TAURI_INTERNALS__
+
+/** 获取适合当前环境的 fetch 函数（Tauri 原生 HTTP 或浏览器 fetch） */
+async function getFetch(): Promise<typeof globalThis.fetch> {
+  if (isTauri()) {
+    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http')
+    return tauriFetch
+  }
+  return globalThis.fetch
+}
+
 export interface StreamOptions {
   url: string
   body: Record<string, unknown>
@@ -24,7 +36,8 @@ export async function fetchSSE({
   signal,
 }: StreamOptions) {
   try {
-    const response = await fetch(url, {
+    const httpFetch = await getFetch()
+    const response = await httpFetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -35,7 +48,16 @@ export async function fetchSSE({
     })
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+      // 尝试读取响应体中的错误详情
+      let errorDetail = ''
+      try {
+        const errorBody = await response.text()
+        const parsed = JSON.parse(errorBody)
+        errorDetail = parsed.error?.message || parsed.message || errorBody
+      } catch {
+        errorDetail = response.statusText || '请求失败'
+      }
+      throw new Error(`HTTP ${response.status}: ${errorDetail}`)
     }
 
     const reader = response.body?.getReader()
@@ -78,9 +100,11 @@ export async function fetchSSE({
         }
       }
     }
-  } catch (error) {
-    if ((error as Error).name === 'AbortError') return
-    onError?.(error as Error)
+  } catch (error: any) {
+    if (error?.name === 'AbortError') return
+    // 兼容 Tauri 插件抛出的非标准错误
+    const message = error?.message || error?.toString?.() || '未知错误'
+    onError?.(new Error(message))
   }
 }
 

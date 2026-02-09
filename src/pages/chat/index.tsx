@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
-import { ArrowUp, Square, Bot, User, Settings, Plus, RotateCcw } from 'lucide-react'
+import { ArrowUp, Square, Bot, User, Settings, Plus, RotateCcw, Copy, Check } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { MarkdownRenderer } from '@/components/chat/MarkdownRenderer'
 import { useChatStore, type Message } from '@/stores/chat'
+import { useConfigStore, normalizeApiUrl, isConfigReady } from '@/stores/config'
 import { createAIRequest } from '@/lib/ai-stream'
 import { cn } from '@/lib/utils'
 import { useAutoScroll } from '@/hooks/useAutoScroll'
@@ -15,9 +16,20 @@ const aiRequest = createAIRequest()
 
 function MessageBubble({ message }: { message: Message }) {
   const isUser = message.role === 'user'
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(message.content)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy text: ', err)
+    }
+  }
 
   return (
-    <div className={cn('flex gap-4 py-6 px-4 hover:bg-white/30 transition-colors rounded-2xl', isUser ? 'flex-row-reverse' : 'flex-row')}>
+    <div className={cn('group flex gap-4 py-6 px-4 hover:bg-white/30 transition-colors rounded-2xl relative', isUser ? 'flex-row-reverse' : 'flex-row')}>
       <Avatar className="h-9 w-9 shrink-0 ring-2 ring-white/50 shadow-sm">
         <AvatarFallback
           className={cn(
@@ -29,7 +41,7 @@ function MessageBubble({ message }: { message: Message }) {
           {isUser ? <User size={18} /> : <Bot size={18} />}
         </AvatarFallback>
       </Avatar>
-      <div className={cn('max-w-[75%] min-w-0', isUser ? 'text-right' : 'text-left')}>
+      <div className={cn('max-w-[75%] min-w-0 flex flex-col', isUser ? 'items-end' : 'items-start')}>
         {isUser ? (
           <div className="inline-block bg-gradient-to-br from-primary to-orange-500 text-white px-5 py-3.5 rounded-[20px] rounded-tr-sm text-[15px] leading-relaxed whitespace-pre-wrap shadow-[0_8px_24px_rgba(255,144,0,0.2)]">
             {message.content}
@@ -47,6 +59,22 @@ function MessageBubble({ message }: { message: Message }) {
             )}
           </div>
         )}
+        
+        {!message.loading && message.content && (
+          <div className={cn(
+            "mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200",
+            isUser ? "mr-2" : "ml-2"
+          )}>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleCopy}
+              className="h-7 w-7 rounded-lg hover:bg-white/50 text-gray-400 hover:text-gray-600"
+            >
+              {copied ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -58,6 +86,7 @@ export default function ChatPage() {
   const [isFocused, setIsFocused] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const navigate = useNavigate()
+  const { apiUrl, apiKey, model } = useConfigStore()
 
   const {
     activeConversationId,
@@ -92,9 +121,16 @@ export default function ChatPage() {
     }
   }
 
+  const configReady = isConfigReady({ apiUrl, apiKey, model })
+
   const handleSend = async () => {
     const content = input.trim()
     if (!content || isStreaming) return
+
+    if (!configReady) {
+      navigate('/settings')
+      return
+    }
 
     // 确保有活跃的对话
     let convId = activeConversationId
@@ -112,17 +148,22 @@ export default function ChatPage() {
     setIsStreaming(true)
     let fullContent = ''
 
-    // 发送 AI 请求 (你需要在设置中配置 API 地址和 Key)
+    // 直接从 store 获取最新配置
+    const latestConfig = useConfigStore.getState()
+    const requestUrl = normalizeApiUrl(latestConfig.apiUrl)
+    const requestModel = latestConfig.model
+    const requestKey = latestConfig.apiKey
+
     await aiRequest.send({
-      url: localStorage.getItem('ai-api-url') || 'https://api.openai.com/v1/chat/completions',
+      url: requestUrl,
       headers: {
-        Authorization: `Bearer ${localStorage.getItem('ai-api-key') || ''}`,
+        Authorization: `Bearer ${requestKey}`,
       },
       body: {
-        model: localStorage.getItem('ai-model') || 'gpt-3.5-turbo',
+        model: requestModel,
         messages: [
           ...(activeConversation?.messages ?? [])
-            .filter((m) => m.role !== 'system')
+            .filter((m) => m.role !== 'system' && m.content && !m.content.startsWith('请求失败'))
             .map((m) => ({ role: m.role, content: m.content })),
           { role: 'user', content },
         ],
@@ -138,7 +179,9 @@ export default function ChatPage() {
         updateMessage(convId!, aiMsgId, fullContent)
       },
       onError: (error) => {
-        updateMessage(convId!, aiMsgId, `请求失败: ${error.message}\n\n请在设置页面配置 API 地址和密钥。`)
+        const time = new Date().toLocaleTimeString()
+        const errorDetail = `请求失败 (${time}): ${error.message}\n\n当前配置:\n- 地址: ${requestUrl}\n- 模型: ${requestModel}`
+        updateMessage(convId!, aiMsgId, errorDetail)
         setMessageLoading(convId!, aiMsgId, false)
         setIsStreaming(false)
       },
@@ -166,8 +209,8 @@ export default function ChatPage() {
             {activeConversation?.title || '新对话'}
           </h2>
           <div className="flex items-center gap-2 mt-0.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]"></span>
-            <span className="text-xs text-gray-500 font-medium">GPT-4 Turbo</span>
+            <span className={cn("w-1.5 h-1.5 rounded-full", configReady ? "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" : "bg-gray-300")}></span>
+            <span className="text-xs text-gray-500 font-medium">{model || '未配置'}</span>
           </div>
         </div>
         <Button
@@ -187,8 +230,22 @@ export default function ChatPage() {
             <div className="mb-8 flex h-20 w-20 items-center justify-center rounded-[24px] bg-gradient-to-br from-white/80 to-white/40 shadow-[0_8px_30px_rgba(0,0,0,0.04)] backdrop-blur-xl ring-1 ring-white/60">
               <Bot size={32} strokeWidth={1.5} className="text-primary" />
             </div>
-            <h2 className="text-2xl font-semibold bg-clip-text text-transparent bg-gradient-to-r from-gray-900 to-gray-600">开始新的对话</h2>
-            <p className="text-[15px] mt-3 text-gray-500 font-light">探索 AI 的无限可能</p>
+            <h2 className="text-2xl font-semibold bg-clip-text text-transparent bg-gradient-to-r from-gray-900 to-gray-600">
+              {configReady ? '开始新的对话' : '请先完成配置'}
+            </h2>
+            <p className="text-[15px] mt-3 text-gray-500 font-light">
+              {configReady ? '探索 AI 的无限可能' : '配置 API 地址、密钥和模型后即可开始'}
+            </p>
+            {!configReady && (
+              <Button
+                variant="outline"
+                onClick={() => navigate('/settings')}
+                className="mt-6 gap-2 rounded-xl"
+              >
+                <Settings size={16} />
+                前往设置
+              </Button>
+            )}
           </div>
         ) : (
           <div className="max-w-4xl mx-auto py-8 space-y-2">

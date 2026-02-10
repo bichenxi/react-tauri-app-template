@@ -83,6 +83,7 @@ declare global {
   const lazy: typeof import('react').lazy
   const memo: typeof import('react').memo
   const nanoid: typeof import('./lib/utils').nanoid
+  const parseDeleteFileIntent: typeof import('./lib/delete-intent').parseDeleteFileIntent
   const startTransition: typeof import('react').startTransition
   const throttle: typeof import('./lib/utils').throttle
   const use: typeof import('react').use

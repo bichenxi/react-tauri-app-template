@@ -53,6 +53,15 @@ export async function executeTool(toolCall: ParsedToolCall): Promise<ToolResult>
         break
       }
 
+      case 'delete_file': {
+        const path = args.path as string
+        if (!path) {
+          throw new Error('缺少参数: path 是必需的')
+        }
+        result = await fileService.deleteFile(path)
+        break
+      }
+
       default:
         throw new Error(`未知工具: ${name}`)
     }

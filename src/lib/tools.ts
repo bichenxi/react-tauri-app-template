@@ -79,6 +79,24 @@ export const AVAILABLE_TOOLS: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'delete_file',
+      description:
+        '删除用户电脑上的一个文件。只能删除安全目录下的文件（Desktop, Documents, Downloads），不能删除目录。',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+            description: '要删除的文件的完整绝对路径',
+          },
+        },
+        required: ['path'],
+      },
+    },
+  },
 ]
 
 // ========== System Prompt ==========
@@ -94,6 +112,7 @@ export function buildSystemPrompt(homeDir: string): string {
 1. **创建文件**: 在用户的桌面(Desktop)、文档(Documents)或下载(Downloads)目录下创建文件。
 2. **读取文件**: 读取上述目录下的文件内容，并对内容进行总结或分析。
 3. **列出文件**: 查看上述目录下有哪些文件。
+4. **删除文件**: 删除上述目录下的某个文件（仅限文件，不能删目录）。
 
 ## 重要规则
 - 用户的主目录是: ${homeDir}
@@ -107,7 +126,8 @@ export function buildSystemPrompt(homeDir: string): string {
 - 所有路径必须是完整的绝对路径。
 - 如果用户没指定文件名后缀，创建文本文件时默认使用 .txt，Markdown 用 .md。
 - 当你需要操作文件时，请使用工具调用。不要只是描述步骤，要实际执行。
-- 执行完工具调用后，用简洁友好的语言告诉用户结果。`
+- 执行完工具调用后，用简洁友好的语言告诉用户结果。
+- **删除文件**：当用户说"删掉/删除 桌面/文档/下载 上的 xxx"时，你必须调用 delete_file 工具，传入完整路径（如 ${homeDir}/Desktop/文件名），不要只回复文字而不执行。`
 }
 
 // ========== AI 响应中的 Tool Call 结构 ==========

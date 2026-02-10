@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils'
 import { useAutoScroll } from '@/hooks/useAutoScroll'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { AVAILABLE_TOOLS, buildSystemPrompt } from '@/lib/tools'
+import { parseDeleteFileIntent } from '@/lib/delete-intent'
 import { executeTools } from '@/lib/tool-executor'
 import { fileService } from '@/services/tauri/files'
 
@@ -169,16 +170,24 @@ export default function ChatPage() {
       : null
 
     const history = existingMessages
-      .filter((m) => m.content && !m.content.startsWith('请求失败'))
+      .filter((m) => {
+        // 带 tool_calls 的 assistant 和 tool 消息必须保留，否则 API 会报错
+        if (m.role === 'tool') return true
+        if (m.role === 'assistant' && m.tool_calls?.length) return true
+        // 其余消息：有内容且非错误提示
+        return !!(m.content && !m.content.startsWith('请求失败'))
+      })
       .map((m) => {
-        const base: Record<string, unknown> = { role: m.role, content: m.content }
-        // assistant 消息如果有 tool_calls，需要附带
-        if (m.role === 'assistant' && m.tool_calls) {
-          base.tool_calls = m.tool_calls
-          // OpenAI 要求有 tool_calls 时 content 可以为 null
-          if (!m.content) base.content = null
+        const base: Record<string, unknown> = {
+          role: m.role,
+          content: m.content ?? (m.role === 'assistant' && m.tool_calls?.length ? null : ''),
         }
-        // tool 角色消息需要带 tool_call_id
+        // assistant 消息如果有 tool_calls，必须附带，否则下一句 tool 会报错
+        if (m.role === 'assistant' && m.tool_calls?.length) {
+          base.tool_calls = m.tool_calls
+          if (base.content === '' || base.content === undefined) base.content = null
+        }
+        // tool 角色消息必须带 tool_call_id
         if (m.role === 'tool' && m.tool_call_id) {
           base.tool_call_id = m.tool_call_id
         }
@@ -312,6 +321,20 @@ export default function ChatPage() {
     setIsStreaming(true)
 
     try {
+      // 删除意图兜底：用户明确说「删掉桌面上的 xxx」时直接执行删除，不依赖 AI 是否调用工具
+      const deletePath = homeDir ? parseDeleteFileIntent(content, homeDir) : null
+      if (deletePath) {
+        try {
+          const result = await fileService.deleteFile(deletePath)
+          addMessage(convId, { role: 'assistant', content: `已删除文件。\n\n${result}` })
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          addMessage(convId, { role: 'assistant', content: `删除失败：${msg}` })
+        }
+        setIsStreaming(false)
+        return
+      }
+
       // 构建初始 API 消息
       const currentConv = useChatStore.getState().conversations.find((c) => c.id === convId)
       let apiMessages = buildApiMessages(

@@ -23,3 +23,9 @@ pub fn create_file(path: String, content: String) -> Result<String, String> {
 pub fn read_file(path: String) -> Result<String, String> {
     file_service::read_file_content(&path)
 }
+
+/// 删除文件 (仅允许在安全目录下，且只能删文件不能删目录)
+#[tauri::command]
+pub fn delete_file(path: String) -> Result<String, String> {
+    file_service::delete_file(&path)
+}

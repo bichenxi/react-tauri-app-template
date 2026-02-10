@@ -105,3 +105,20 @@ pub fn read_file_content(path: &str) -> Result<String, String> {
 
     fs::read_to_string(path).map_err(|e| format!("Failed to read file: {}", e))
 }
+
+/// 删除文件（仅限安全目录下的文件，不允许删除目录）
+pub fn delete_file(path: &str) -> Result<String, String> {
+    let path_obj = Path::new(path);
+    validate_path_safety(path_obj)?;
+
+    if !path_obj.exists() {
+        return Err(format!("File not found: {}", path));
+    }
+
+    if path_obj.is_dir() {
+        return Err("Cannot delete directories; only files are allowed.".to_string());
+    }
+
+    fs::remove_file(path).map_err(|e| format!("Failed to delete file: {}", e))?;
+    Ok(format!("File deleted successfully: {}", path))
+}

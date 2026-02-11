@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react'
-import { Eye, EyeOff, ArrowLeft, Loader2, CheckCircle2, XCircle } from 'lucide-react'
+import { useState, useMemo, useEffect } from 'react'
+import { Eye, EyeOff, ArrowLeft, Loader2, CheckCircle2, XCircle, Monitor, Sun, Moon, ImagePlay } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -8,6 +8,7 @@ import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { useAppStore } from '@/stores/app'
 import { useConfigStore, normalizeApiUrl, isConfigReady } from '@/stores/config'
+import { invoke } from '@tauri-apps/api/core'
 
 /** 按 API 提供商分组的常用模型和 base URL */
 const MODEL_PRESETS: Record<string, { label: string; baseUrl: string; models: string[] }> = {
@@ -103,6 +104,16 @@ export default function SettingsPage() {
   const [showKey, setShowKey] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [systemDarkMode, setSystemDarkMode] = useState<boolean | null>(null)
+  const [brightnessPercent, setBrightnessPercent] = useState<number | null>(null)
+  const [brightnessSupported, setBrightnessSupported] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    invoke<boolean>('system_get_theme_dark').then(setSystemDarkMode).catch(() => setSystemDarkMode(null))
+  }, [])
+  useEffect(() => {
+    invoke<number>('system_get_brightness').then((v) => { setBrightnessPercent(Math.round(v)); setBrightnessSupported(true) }).catch(() => setBrightnessSupported(false))
+  }, [])
 
   const modelPreset = useMemo(() => getModelSuggestions(apiUrl), [apiUrl])
   const configOk = isConfigReady({ apiUrl, apiKey, model })
@@ -134,6 +145,107 @@ export default function SettingsPage() {
         </div>
 
         <Separator className="dark:bg-white/10" />
+
+        {/* 电脑设置：系统外观与显示 */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Monitor size={20} />
+              电脑设置
+            </CardTitle>
+            <CardDescription>
+              切换系统黑暗模式、调节屏幕亮度、屏保等（仅在本机生效）
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {/* 系统黑暗/浅色模式 */}
+            <div className="flex items-center justify-between rounded-xl border border-black/[0.06] dark:border-white/10 bg-white/50 dark:bg-white/5 p-4">
+              <div className="flex items-center gap-3">
+                {systemDarkMode ? <Moon size={20} className="text-primary" /> : <Sun size={20} className="text-amber-500" />}
+                <div>
+                  <p className="font-medium text-gray-900 dark:text-gray-100">系统外观</p>
+                  <p className="text-sm text-gray-500">黑暗模式 / 浅色模式（系统级）</p>
+                </div>
+              </div>
+              <Switch
+                checked={systemDarkMode ?? false}
+                onCheckedChange={async (checked) => {
+                  try {
+                    await invoke('system_set_theme_dark', { dark: checked })
+                    setSystemDarkMode(checked)
+                  } catch (e) {
+                    console.error(e)
+                  }
+                }}
+              />
+            </div>
+
+            {/* 屏幕亮度 */}
+            {brightnessSupported === true && brightnessPercent !== null && (
+              <div className="rounded-xl border border-black/[0.06] dark:border-white/10 bg-white/50 dark:bg-white/5 p-4 space-y-2">
+                <p className="font-medium text-gray-900 dark:text-gray-100">屏幕亮度</p>
+                <div className="flex items-center gap-3">
+                  <Sun size={16} className="text-gray-400 shrink-0" />
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={brightnessPercent}
+                    onChange={(e) => setBrightnessPercent(Number(e.target.value))}
+                    onMouseUp={async (e) => {
+                      const v = Number((e.target as HTMLInputElement).value)
+                      try {
+                        await invoke('system_set_brightness', { percent: v })
+                      } catch (err) {
+                        console.error(err)
+                      }
+                    }}
+                    onTouchEnd={async (e) => {
+                      const v = Number((e.target as HTMLInputElement).value)
+                      try {
+                        await invoke('system_set_brightness', { percent: v })
+                      } catch (err) {
+                        console.error(err)
+                      }
+                    }}
+                    className="flex-1 h-2 rounded-full appearance-none bg-gray-200 dark:bg-gray-700 accent-primary"
+                  />
+                  <span className="text-sm text-gray-500 w-10">{brightnessPercent}%</span>
+                </div>
+              </div>
+            )}
+            {brightnessSupported === false && (
+              <p className="text-sm text-gray-500">当前系统不支持在此调节亮度（部分 macOS 机型需系统设置）。</p>
+            )}
+
+            {/* 屏保 */}
+            <div className="flex items-center justify-between rounded-xl border border-black/[0.06] dark:border-white/10 bg-white/50 dark:bg-white/5 p-4">
+              <div className="flex items-center gap-3">
+                <ImagePlay size={20} className="text-gray-500" />
+                <div>
+                  <p className="font-medium text-gray-900 dark:text-gray-100">屏保</p>
+                  <p className="text-sm text-gray-500">立即启动屏保或打开屏保设置</p>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => invoke('system_start_screensaver').catch(console.error)}
+                >
+                  启动屏保
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => invoke('system_open_screensaver_settings').catch(console.error)}
+                >
+                  屏保设置
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* AI 模型配置 */}
         <Card>
